@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YouTube Quiz Generator</title>
+  <style>
+    :root { --bg:#0f1115; --card:#181b22; --text:#e8eaf0; --muted:#9aa3b2;
+            --accent:#4f8cff; --good:#2ecc71; --bad:#e74c3c; --line:#2a2f3a; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+           background:var(--bg); color:var(--text); line-height:1.5; }
+    main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+    h1 { margin: 0 0 4px; font-size: 1.8rem; }
+    .sub { color: var(--muted); margin: 0 0 24px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
+            padding:20px; margin-bottom:16px; }
+    form { display:flex; flex-wrap:wrap; gap:10px; }
+    input[type=text] { flex:1 1 320px; padding:10px 12px; border-radius:8px;
+            border:1px solid var(--line); background:#0f1115; color:var(--text); font-size:1rem; }
+    select { padding:10px; border-radius:8px; border:1px solid var(--line);
+             background:#0f1115; color:var(--text); font-size:1rem; }
+    button { padding:10px 18px; border:0; border-radius:8px; background:var(--accent);
+             color:#fff; font-size:1rem; cursor:pointer; }
+    button:disabled { opacity:.6; cursor:wait; }
+    #status { color:var(--muted); margin:12px 0; min-height:1.5em; }
+    #status.error { color:var(--bad); }
+    .q-title { font-weight:600; margin:0 0 10px; }
+    label.opt { display:block; padding:8px 10px; border:1px solid var(--line);
+                border-radius:8px; margin-bottom:6px; cursor:pointer; }
+    label.opt:hover { border-color:var(--accent); }
+    label.opt.correct { border-color:var(--good); background:rgba(46,204,113,.12); }
+    label.opt.wrong { border-color:var(--bad); background:rgba(231,76,60,.12); }
+    .explain { color:var(--muted); font-size:.92rem; margin:8px 0 0; display:none; }
+    #score { font-size:1.2rem; font-weight:600; margin-top:12px; }
+    iframe { width:100%; aspect-ratio:16/9; border:0; border-radius:8px; margin-bottom:16px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>YouTube Quiz Generator</h1>
+  <p class="sub">Paste a YouTube link and get a multiple-choice quiz from the video's transcript.</p>
+
+  <div class="card">
+    <form id="form">
+      <input type="text" id="url" placeholder="https://www.youtube.com/watch?v=..." required>
+      <select id="count" aria-label="Number of questions">
+        {% for n in range(min_q, max_q + 1) %}
+        <option value="{{ n }}" {% if n == 5 %}selected{% endif %}>{{ n }} questions</option>
+        {% endfor %}
+      </select>
+      <button type="submit" id="go">Generate quiz</button>
+    </form>
+    <div id="status"></div>
+  </div>
+
+  <div id="quiz" hidden>
+    <div id="video"></div>
+    <div id="questions"></div>
+    <button id="check" type="button">Check answers</button>
+    <div id="score"></div>
+  </div>
+</main>
+
+<script>
+  const form = document.getElementById("form");
+  const statusEl = document.getElementById("status");
+  const goBtn = document.getElementById("go");
+  const quizEl = document.getElementById("quiz");
+  const questionsEl = document.getElementById("questions");
+  const videoEl = document.getElementById("video");
+  const scoreEl = document.getElementById("score");
+  const checkBtn = document.getElementById("check");
+  let current = [];
+
+  function setStatus(text, isError) {
+    statusEl.textContent = text;
+    statusEl.className = isError ? "error" : "";
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    quizEl.hidden = true;
+    scoreEl.textContent = "";
+    goBtn.disabled = true;
+    setStatus("Fetching transcript and writing questions... this can take a few seconds.");
+    try {
+      const res = await fetch("/api/quiz", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: document.getElementById("url").value,
+          num_questions: Number(document.getElementById("count").value),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Something went wrong.");
+      render(data);
+      setStatus("");
+    } catch (err) {
+      setStatus(err.message, true);
+    } finally {
+      goBtn.disabled = false;
+    }
+  });
+
+  function render(data) {
+    current = data.questions;
+    videoEl.innerHTML = "";
+    const frame = document.createElement("iframe");
+    frame.src = "https://www.youtube.com/embed/" + encodeURIComponent(data.video_id);
+    frame.allowFullscreen = true;
+    videoEl.appendChild(frame);
+
+    questionsEl.innerHTML = "";
+    current.forEach((q, i) => {
+      const card = document.createElement("div");
+      card.className = "card";
+
+      const title = document.createElement("p");
+      title.className = "q-title";
+      title.textContent = (i + 1) + ". " + q.question;
+      card.appendChild(title);
+
+      q.options.forEach((opt, j) => {
+        const label = document.createElement("label");
+        label.className = "opt";
+        const radio = document.createElement("input");
+        radio.type = "radio";
+        radio.name = "q" + i;
+        radio.value = j;
+        label.appendChild(radio);
+        label.appendChild(document.createTextNode(" " + "ABCD"[j] + ". " + opt));
+        card.appendChild(label);
+      });
+
+      const explain = document.createElement("p");
+      explain.className = "explain";
+      explain.textContent = q.explanation;
+      card.appendChild(explain);
+
+      questionsEl.appendChild(card);
+    });
+    checkBtn.disabled = false;
+    quizEl.hidden = false;
+  }
+
+  checkBtn.addEventListener("click", () => {
+    let score = 0;
+    current.forEach((q, i) => {
+      const card = questionsEl.children[i];
+      const labels = card.querySelectorAll("label.opt");
+      const picked = card.querySelector("input:checked");
+      labels[q.answer_index].classList.add("correct");
+      if (picked && Number(picked.value) === q.answer_index) {
+        score++;
+      } else if (picked) {
+        picked.parentElement.classList.add("wrong");
+      }
+      card.querySelectorAll("input").forEach((r) => (r.disabled = true));
+      card.querySelector(".explain").style.display = "block";
+    });
+    scoreEl.textContent = "Score: " + score + " / " + current.length;
+    checkBtn.disabled = true;
+  });
+</script>
+</body>
+</html>
